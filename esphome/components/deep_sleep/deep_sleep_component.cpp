@@ -20,10 +20,13 @@ optional<uint32_t> DeepSleepComponent::get_run_duration_() const {
     switch (wakeup_cause) {
       case ESP_SLEEP_WAKEUP_EXT0:
       case ESP_SLEEP_WAKEUP_EXT1:
+        ESP_LOGCONFIG(TAG, "Woken up by pin.");
         return this->wakeup_cause_to_run_duration_->gpio_cause;
       case ESP_SLEEP_WAKEUP_TOUCHPAD:
+        ESP_LOGCONFIG(TAG, "Woken up by touch.");
         return this->wakeup_cause_to_run_duration_->touch_cause;
       default:
+        ESP_LOGCONFIG(TAG, "Woken up by default (turned on or timer).");
         return this->wakeup_cause_to_run_duration_->default_cause;
     }
   }
@@ -37,10 +40,10 @@ void DeepSleepComponent::setup() {
 
   const optional<uint32_t> run_duration = get_run_duration_();
   if (run_duration.has_value()) {
-    ESP_LOGI(TAG, "Scheduling Deep Sleep to start in %u ms", *run_duration);
+    ESP_LOGCONFIG(TAG, "Scheduling Deep Sleep to start in %u ms", *run_duration);
     this->set_timeout(*run_duration, [this]() { this->begin_sleep(); });
   } else {
-    ESP_LOGD(TAG, "Not scheduling Deep Sleep, as no run duration is configured.");
+    ESP_LOGCONFIG(TAG, "Not scheduling Deep Sleep, as no run duration is configured.");
   }
 }
 void DeepSleepComponent::dump_config() {
@@ -61,6 +64,10 @@ void DeepSleepComponent::dump_config() {
     ESP_LOGCONFIG(TAG, "  Touch Wakeup Run Duration: %u ms", this->wakeup_cause_to_run_duration_->touch_cause);
     ESP_LOGCONFIG(TAG, "  GPIO Wakeup Run Duration: %u ms", this->wakeup_cause_to_run_duration_->gpio_cause);
   }
+  
+  const optional<uint32_t> run_duration = get_run_duration_();
+  if (run_duration.has_value())
+    ESP_LOGCONFIG(TAG, "  Actual Run Duration: %u ms", *run_duration);
 #endif
 }
 void DeepSleepComponent::loop() {
@@ -105,14 +112,23 @@ void DeepSleepComponent::begin_sleep(bool manual) {
   App.run_safe_shutdown_hooks();
 
 #if defined(USE_ESP32) && !defined(USE_ESP32_VARIANT_ESP32C3)
-  if (this->sleep_duration_.has_value())
+  if (this->sleep_duration_.has_value()) {
+    ESP_LOGI(TAG, "Setting timer");
     esp_sleep_enable_timer_wakeup(*this->sleep_duration_);
+  } else {
+    ESP_LOGI(TAG, "No timer set.");
+  }
   if (this->wakeup_pin_ != nullptr) {
+    ESP_LOGI(TAG, "Wakeup pin set.");
     bool level = !this->wakeup_pin_->is_inverted();
     if (this->wakeup_pin_mode_ == WAKEUP_PIN_MODE_INVERT_WAKEUP && this->wakeup_pin_->digital_read()) {
+      ESP_LOGI(TAG, "Inverting level.");
       level = !level;
     }
+    ESP_LOGI(TAG, "About to sleep on pin, expecting level level: %d", level);
     esp_sleep_enable_ext0_wakeup(gpio_num_t(this->wakeup_pin_->get_pin()), level);
+  } else {
+      ESP_LOGI(TAG, "No wakeup pin.");
   }
   if (this->ext1_wakeup_.has_value()) {
     esp_sleep_enable_ext1_wakeup(this->ext1_wakeup_->mask, this->ext1_wakeup_->wakeup_mode);
@@ -123,6 +139,7 @@ void DeepSleepComponent::begin_sleep(bool manual) {
     esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
   }
 
+  ESP_LOGI(TAG, "Actually going to sleep...");
   esp_deep_sleep_start();
 #endif
 
